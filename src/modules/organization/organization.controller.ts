@@ -20,7 +20,9 @@ import { AuthenticatedUser } from '../../common/interfaces/authenticated-user.in
 export class OrganizationController {
   constructor(private readonly organizationService: OrganizationService) {}
 
-  @Roles(RoleCode.SUPER_ADMIN)
+  // Authenticated only (JwtAuthGuard still applies). New accounts without an
+  // org ('unassigned') use this to onboard by creating their organization;
+  // the account is promoted to org_admin of the new org.
   @Post()
   create(@Body() dto: CreateOrganizationDto, @CurrentUser() user: AuthenticatedUser) {
     return this.organizationService.createOrganization(dto, user.id);

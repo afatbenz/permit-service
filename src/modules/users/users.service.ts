@@ -35,4 +35,21 @@ export class UsersService {
       verifiedAt: new Date(),
     });
   }
+
+  /**
+   * Onboarding helper: moves an 'unassigned' account into a real org and a
+   * concrete role (e.g. org_admin) when they create their organization.
+   */
+  updateOrganizationAndRole(
+    id: string,
+    organizationId: string,
+    roleId: string,
+    options?: CreateOptions,
+  ): Promise<[number]> {
+    return this.userRepository.updateById(
+      id,
+      { organizationId, roleId },
+      options,
+    );
+  }
 }

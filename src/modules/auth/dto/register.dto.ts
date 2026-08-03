@@ -1,9 +1,12 @@
-import { IsEmail, IsNotEmpty, IsString, IsUUID, MinLength } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsString, MinLength } from 'class-validator';
 
 /**
- * Self-register for Supervisor Sub-Con only. organizationId, projectId and
- * roleId are NEVER accepted from the client — they're resolved server-side
- * from `registrationToken` (see AuthService.register()).
+ * General self-register: creates a basic account with no organization yet
+ * (role 'unassigned', pointing at the sentinel PENDING org). The user then
+ * picks Create Organization or Join Organization after logging in.
+ *
+ * The old token-gated Supervisor Sub-Con registration is covered by the
+ * join-organization flow (invite/registration link), not this endpoint.
  */
 export class RegisterDto {
   @IsString()
@@ -20,11 +23,4 @@ export class RegisterDto {
   @IsString()
   @IsNotEmpty()
   phone: string;
-
-  @IsUUID()
-  subconCompanyId: string;
-
-  @IsString()
-  @IsNotEmpty()
-  registrationToken: string;
 }

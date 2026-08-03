@@ -9,6 +9,7 @@ import { User } from './models/user.model';
 import { UserProfile } from './models/user-profile.model';
 import { RegistrationLink } from './models/registration-link.model';
 import { OrganizationInvite } from './models/organization-invite.model';
+import { RefreshToken } from './models/refresh-token.model';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { OrganizationInvite } from './models/organization-invite.model';
           UserProfile,
           RegistrationLink,
           OrganizationInvite,
+          RefreshToken,
         ],
         logging: false,
       }),

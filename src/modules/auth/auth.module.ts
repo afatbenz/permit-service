@@ -10,14 +10,16 @@ import { UsersModule } from '../users/users.module';
 import { RedisModule } from '../../redis/redis.module';
 import { RegistrationLink } from '../../database/models/registration-link.model';
 import { SubconCompany } from '../../database/models/subcon-company.model';
+import { Organization } from '../../database/models/organization.model';
 import { Role } from '../../database/models/role.model';
+import { RefreshToken } from '../../database/models/refresh-token.model';
 
 @Module({
   imports: [
     UsersModule,
     RedisModule,
     PassportModule,
-    SequelizeModule.forFeature([RegistrationLink, SubconCompany, Role]),
+    SequelizeModule.forFeature([RegistrationLink, SubconCompany, Organization, Role, RefreshToken]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

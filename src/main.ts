@@ -12,6 +12,14 @@ async function bootstrap() {
 
   app.setGlobalPrefix('api/v1');
 
+  // Allow the Vite dev server (and any other origin) to call the API from a
+  // different port. Tokens are sent via the Authorization header, not
+  // cookies, so credentials are optional — enabled anyway for flexibility.
+  app.enableCors({
+    origin: true,
+    credentials: true,
+  });
+
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,

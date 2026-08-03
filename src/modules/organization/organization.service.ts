@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
@@ -46,10 +47,44 @@ export class OrganizationService {
    * letters + 3 random digits (e.g. "PT. Jaya Obayashi" -> "JYBYS482"),
    * retried on collision.
    */
+  /**
+   * Creates an Organization and assigns its first admin.
+   *
+   * Two entry points share this method:
+   * - Onboarding: an authenticated account in the 'unassigned' pre-org state
+   *   creates their organization and is promoted to org_admin of it (their
+   *   own row is updated in place — no duplicate admin user).
+   * - Super Admin (legacy): creates the org plus a fresh org_admin user.
+   */
   async createOrganization(dto: CreateOrganizationDto, createdBy: string) {
-    const existingEmail = await this.usersService.findByEmail(dto.adminEmail);
-    if (existingEmail) {
-      throw new ConflictException('Email admin sudah terdaftar');
+    const creator = await this.usersService.findById(createdBy);
+    if (!creator) {
+      throw new BadRequestException('User tidak ditemukan');
+    }
+
+    const creatorRole = await this.roleModel.findByPk(creator.roleId);
+    const isOnboarding = creatorRole?.code === 'unassigned';
+    const isSuperAdmin = creatorRole?.code === RoleCode.SUPER_ADMIN;
+
+    // Only 'unassigned' (onboarding) and 'super_admin' (legacy) may create a
+    // new organization. Anyone else already belongs to a tenant.
+    if (!isOnboarding && !isSuperAdmin) {
+      throw new ForbiddenException(
+        'Anda sudah memiliki organisasi. Tidak bisa membuat organisasi baru.',
+      );
+    }
+
+    if (isOnboarding) {
+      // The caller's own email is used as the org admin — they can't
+      // self-register then claim to be someone else's admin.
+      if (dto.adminEmail.toLowerCase() !== creator.email.toLowerCase()) {
+        throw new ForbiddenException('Email admin harus sama dengan akun Anda saat onboarding');
+      }
+    } else {
+      const existingEmail = await this.usersService.findByEmail(dto.adminEmail);
+      if (existingEmail) {
+        throw new ConflictException('Email admin sudah terdaftar');
+      }
     }
 
     const orgAdminRole = await this.roleModel.findOne({ where: { code: RoleCode.ORG_ADMIN } });
@@ -71,6 +106,24 @@ export class OrganizationService {
         { transaction },
       );
 
+      if (isOnboarding) {
+        // Promote the existing account to org_admin of its new org.
+        await this.usersService.updateOrganizationAndRole(
+          createdBy,
+          organization.id,
+          orgAdminRole.id,
+          { transaction },
+        );
+
+        const promoted = await this.usersService.findById(createdBy);
+        return {
+          organization: organization.toJSON(),
+          admin: promoted ? promoted.toSafeObject() : null,
+          promoted: true,
+        };
+      }
+
+      // Legacy Super Admin path: create a fresh org_admin user.
       const admin = await this.usersService.create(
         {
           organizationId: organization.id,
@@ -79,8 +132,6 @@ export class OrganizationService {
           email: dto.adminEmail,
           phone: dto.adminPhone,
           passwordHash,
-          // Auto-verified: Super Admin created this account explicitly,
-          // there's no self-register pending gate to clear here.
           verificationStatus: VerificationStatus.VERIFIED,
           status: RecordStatus.ACTIVE,
           createdBy,
@@ -91,6 +142,7 @@ export class OrganizationService {
       return {
         organization: organization.toJSON(),
         admin: admin.toSafeObject(),
+        promoted: false,
       };
     });
   }
