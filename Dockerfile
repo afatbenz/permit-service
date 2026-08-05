@@ -1,39 +1,29 @@
-# ---- Build stage ----
-FROM node:20-alpine AS build
+# ─── permit-service backend Dockerfile ──────────────────────────────────
+# Multi-stage: install deps → build → prune to devDeps → runtime.
+# Migrations run automatically on boot via AUTO_MIGRATE_ON_BOOT=true.
+# ─────────────────────────────────────────────────────────────────────────
 
+# ---- Stage 1: install all deps (incl. dev) + build ----
+FROM node:22-alpine AS builder
 WORKDIR /app
 
-# Install dependencies (reproducible via lockfile)
 COPY package*.json ./
 RUN npm ci
 
-# Compile TypeScript -> dist/
-COPY tsconfig*.json ./
-COPY src ./src
+COPY . .
 RUN npm run build
 
-# ---- Runtime stage ----
-FROM node:20-alpine AS runtime
-
+# ---- Stage 2: production image ----
+FROM node:22-alpine AS runner
+ENV NODE_ENV=production
 WORKDIR /app
 
-ENV NODE_ENV=production
-
-# Copy compiled output + lockfile (npm ci --omit=dev gives runtime deps)
 COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
-COPY --from=build /app/dist ./dist
-
-# nest build only compiles TS -> JS; raw SQL migrations are NOT emitted to
-# dist. Copy them explicitly so run-migrations.js can apply them at boot.
-RUN mkdir -p /app/dist/database/migrations
-COPY src/database/migrations/ ./dist/database/migrations/
-
-# Entrypoint runs migrations + role seed, then starts the app.
-COPY docker-entrypoint.sh ./
-RUN chmod +x docker-entrypoint.sh
+# Copy built dist + compiled migrations assets
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
 
 EXPOSE 3000
-
-ENTRYPOINT ["./docker-entrypoint.sh"]
+CMD ["node", "dist/main.js"]
