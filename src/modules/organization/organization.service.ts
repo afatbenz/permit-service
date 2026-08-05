@@ -15,6 +15,7 @@ import { UsersService } from '../users/users.service';
 import { CreateOrganizationDto } from './dto/create-organization.dto';
 import { InviteOrganizationDto } from './dto/invite-organization.dto';
 import { JoinOrganizationDto } from './dto/join-organization.dto';
+import { UpdateUserRoleDto } from './dto/update-user-role.dto';
 import { Role } from '../../database/models/role.model';
 import { OrganizationInvite } from '../../database/models/organization-invite.model';
 import { RecordStatus } from '../../common/enums/record-status.enum';
@@ -315,5 +316,80 @@ export class OrganizationService {
     await this.usersService.updateVerification(userId, VerificationStatus.REJECTED, rejectedBy);
 
     return { message: 'User ditolak', userId };
+  }
+
+  /**
+   * Org Admin (own org only) / Super Admin: list every user in an
+   * organization with their role, for the user-management screen.
+   */
+  async listUsers(organizationId: string) {
+    const organization = await this.organizationRepository.findById(organizationId);
+    if (!organization) {
+      throw new NotFoundException('Organization tidak ditemukan');
+    }
+
+    const users = await this.usersService.listByOrganizationWithRole(organizationId);
+
+    return {
+      users: users.map((u) => ({
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        phone: u.phone,
+        roleId: u.roleId,
+        roleCode: u.role?.code ?? null,
+        roleName: u.role?.name ?? null,
+        verificationStatus: u.verificationStatus,
+        status: u.status,
+        createdAt: u.createdAt,
+      })),
+    };
+  }
+
+  /**
+   * Org Admin (own org only) / Super Admin: reassign a user's role inside an
+   * organization. Guards:
+   * - target user must belong to the same org (cross-tenant denied)
+   * - role must exist and be an org-assignable role (not super_admin, not
+   *   the pre-onboarding 'unassigned' placeholder)
+   * - an admin can't demote themselves (prevents locking the org out)
+   */
+  async updateUserRole(
+    organizationId: string,
+    userId: string,
+    dto: UpdateUserRoleDto,
+    actorId: string,
+  ) {
+    const organization = await this.organizationRepository.findById(organizationId);
+    if (!organization) {
+      throw new NotFoundException('Organization tidak ditemukan');
+    }
+
+    const user = await this.usersService.findById(userId);
+    if (!user) {
+      throw new NotFoundException('User tidak ditemukan');
+    }
+    if (user.organizationId !== organizationId) {
+      throw new ForbiddenException('User tidak berada pada organization ini');
+    }
+    if (userId === actorId) {
+      throw new BadRequestException('Tidak bisa mengubah role akun Anda sendiri');
+    }
+
+    const role = await this.roleModel.findByPk(dto.roleId);
+    if (!role) {
+      throw new BadRequestException('Role tidak ditemukan');
+    }
+    if (role.code === RoleCode.SUPER_ADMIN || role.code === RoleCode.UNASSIGNED) {
+      throw new ForbiddenException(`Role '${role.code}' tidak bisa di-assign oleh admin organization`);
+    }
+
+    await this.usersService.updateOrganizationAndRole(userId, organizationId, role.id);
+
+    return {
+      message: `Role user ${user.name} diubah menjadi ${role.name}`,
+      userId,
+      role: { id: role.id, code: role.code, name: role.name },
+    };
   }
 }

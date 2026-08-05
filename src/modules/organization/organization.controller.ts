@@ -2,14 +2,17 @@ import {
   Body,
   Controller,
   ForbiddenException,
+  Get,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
 } from '@nestjs/common';
 import { OrganizationService } from './organization.service';
 import { CreateOrganizationDto } from './dto/create-organization.dto';
 import { InviteOrganizationDto } from './dto/invite-organization.dto';
 import { JoinOrganizationDto } from './dto/join-organization.dto';
+import { UpdateUserRoleDto } from './dto/update-user-role.dto';
 import { Public } from '../../common/decorators/public.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -47,6 +50,36 @@ export class OrganizationController {
   @Post('join')
   join(@Body() dto: JoinOrganizationDto) {
     return this.organizationService.join(dto);
+  }
+
+  // --- User management (Org Admin of that org, or Super Admin) ---
+
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.ORG_ADMIN)
+  @Get(':id/users')
+  listUsers(
+    @Param('id', ParseUUIDPipe) organizationId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    // Org Admin can only view users of their own organization.
+    if (user.roleCode === RoleCode.ORG_ADMIN && user.organizationId !== organizationId) {
+      throw new ForbiddenException('Tidak bisa melihat user organization lain');
+    }
+    return this.organizationService.listUsers(organizationId);
+  }
+
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.ORG_ADMIN)
+  @Patch(':id/users/:userId/role')
+  updateUserRole(
+    @Param('id', ParseUUIDPipe) organizationId: string,
+    @Param('userId', ParseUUIDPipe) userId: string,
+    @Body() dto: UpdateUserRoleDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    // Org Admin can only manage users of their own organization.
+    if (user.roleCode === RoleCode.ORG_ADMIN && user.organizationId !== organizationId) {
+      throw new ForbiddenException('Tidak bisa mengubah user organization lain');
+    }
+    return this.organizationService.updateUserRole(organizationId, userId, dto, user.id);
   }
 
   // --- Super Admin approval gate for accounts stuck in 'pending' ---
