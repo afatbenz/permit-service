@@ -52,4 +52,9 @@ export class UsersService {
       options,
     );
   }
+
+  /** All users in an org with their role joined — for Org Admin management. */
+  listByOrganizationWithRole(organizationId: string): Promise<User[]> {
+    return this.userRepository.findByOrganizationWithRole(organizationId);
+  }
 }

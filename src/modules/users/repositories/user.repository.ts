@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/sequelize';
 import { BaseRepository } from '../../../common/repositories/base.repository';
 import { User } from '../../../database/models/user.model';
+import { Role } from '../../../database/models/role.model';
 
 @Injectable()
 export class UserRepository extends BaseRepository<User> {
@@ -15,5 +16,17 @@ export class UserRepository extends BaseRepository<User> {
 
   touchLastLogin(id: string): Promise<[number]> {
     return this.model.update({ lastLoginAt: new Date() }, { where: { id } });
+  }
+
+  /**
+   * All active users in an organization, with their role joined in.
+   * Used by the Org Admin user-management screen.
+   */
+  findByOrganizationWithRole(organizationId: string): Promise<User[]> {
+    return this.model.findAll({
+      where: { organizationId },
+      include: [{ model: Role, as: 'role', required: false }],
+      order: [['createdAt', 'ASC']],
+    });
   }
 }

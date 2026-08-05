@@ -10,4 +10,5 @@ export enum RoleCode {
   SUPERVISOR_MAINCON = 'supervisor_maincon',
   HSE_MAINCON = 'hse_maincon',
   CM_MAINCON = 'cm_maincon',
+  UNASSIGNED = 'unassigned',
 }
