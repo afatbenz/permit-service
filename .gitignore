@@ -3,3 +3,6 @@ dist/
 .env
 *.log
 .DS_Store
+
+# Uploaded files (signatures, evidence) — never commit to git.
+storage/

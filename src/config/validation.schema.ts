@@ -16,5 +16,7 @@ export const validationSchema = Joi.object({
   JWT_SECRET: Joi.string().min(16).required(),
   JWT_EXPIRES_IN: Joi.string().default('1d'),
 
+  STORAGE_PATH: Joi.string().default('storage'),
+
   AUTO_MIGRATE_ON_BOOT: Joi.string().valid('true', 'false').default('true'),
 });

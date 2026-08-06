@@ -20,6 +20,13 @@ export default () => ({
     expiresIn: process.env.JWT_EXPIRES_IN ?? '1d',
   },
 
+  // Root directory for uploaded files (signatures, permit evidence, ...).
+  // Never a folder served as static/public. Set to an absolute path on the
+  // VPS (e.g. /var/www/epermit/storage) via STORAGE_PATH.
+  storage: {
+    path: process.env.STORAGE_PATH ?? 'storage',
+  },
+
   // Auto-run pending SQL migrations on app boot. Convenient for dev/single
   // instance deployments. For multi-instance production deployments,
   // prefer setting this to 'false' and running `npm run migrate` as a

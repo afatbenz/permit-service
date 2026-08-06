@@ -10,6 +10,7 @@ import { UserProfile } from './models/user-profile.model';
 import { RegistrationLink } from './models/registration-link.model';
 import { OrganizationInvite } from './models/organization-invite.model';
 import { RefreshToken } from './models/refresh-token.model';
+import { PermitEvidence } from './models/permit-evidence.model';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { RefreshToken } from './models/refresh-token.model';
           RegistrationLink,
           OrganizationInvite,
           RefreshToken,
+          PermitEvidence,
         ],
         logging: false,
       }),

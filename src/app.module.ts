@@ -5,9 +5,12 @@ import configuration from './config/configuration';
 import { validationSchema } from './config/validation.schema';
 import { DatabaseModule } from './database/database.module';
 import { RedisModule } from './redis/redis.module';
+import { StorageModule } from './common/storage/storage.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { OrganizationModule } from './modules/organization/organization.module';
+import { ProfileModule } from './modules/profile/profile.module';
+import { PermitModule } from './modules/permit/permit.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 
@@ -20,9 +23,12 @@ import { RolesGuard } from './common/guards/roles.guard';
     }),
     DatabaseModule,
     RedisModule,
+    StorageModule,
     AuthModule,
     UsersModule,
     OrganizationModule,
+    ProfileModule,
+    PermitModule,
   ],
   providers: [
     // Order matters: JwtAuthGuard runs first (populates req.user / respects
