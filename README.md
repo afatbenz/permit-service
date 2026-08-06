@@ -177,4 +177,62 @@ src/
     auth/              # register, login, JWT strategy
     users/              # shared user repository/service
     organization/       # create / invite / join
+    profile/            # update profile + signature upload (file/base64)
+    permit/             # permit evidence (upload/list/serve/delete)
 ```
+
+---
+
+## File uploads (signature & permit evidence)
+
+Uploaded files are stored under `STORAGE_PATH` (env, default `storage`), with
+sub-folders `storage/signatures/` and `storage/evidence/`. This folder is
+**never served statically** — files are streamed through authenticated,
+ownership-checked endpoints.
+
+### VPS (Linux) folder permissions
+The storage root must be writable by the Node process user:
+```bash
+sudo mkdir -p /var/www/epermit/storage
+sudo chown -R node:node /var/www/epermit/storage   # or your app user
+sudo chmod 750 /var/www/epermit/storage
+```
+Set `STORAGE_PATH=/var/www/epermit/storage` in `.env`. Sub-folders are
+created automatically on boot.
+
+### Validation
+- Allowed MIME: `image/png`, `image/jpeg`, `image/webp`.
+- Signature max **2 MB**; evidence max **5 MB per file** (max 10 files/request).
+- Files are stored with a UUID name + extension derived from the validated
+  MIME type — the client-supplied filename/extension is never trusted.
+- Rejected uploads return a clear `BadRequestException` message via the
+  global `HttpExceptionFilter`.
+
+### Endpoints
+
+**Profile / Signature** (`modules/profile`)
+| Method | Path | Body |
+|---|---|---|
+| `PUT` | `/api/v1/profile` | multipart `file` **or** JSON `{ signature: "data:image/png;base64,...", name?, email?, phone?, jobTitle? }` |
+| `GET` | `/api/v1/profile/signature` | — (own signature, auth) |
+| `GET` | `/api/v1/profile/signature/users/:userId` | — (Super Admin only) |
+
+Signature update is transactional with the profile-field update: file is
+written, `user_profiles.defaultSignatureUrl` is upserted, then the previous
+signature file is deleted only after success.
+
+**Permit Evidence** (`modules/permit`) — `permit_id` is an opaque UUID
+(no `permits` table yet).
+| Method | Path | Notes |
+|---|---|---|
+| `POST` | `/api/v1/permits/:permitId/evidences?types=[...]` | multipart, field `files` repeated; `types` = JSON array string, index-aligned |
+| `GET` | `/api/v1/permits/:permitId/evidences?evidenceType=SITE_MAP` | list, optional filter |
+| `GET` | `/api/v1/permits/:permitId/evidences/:evidenceId/file` | stream file (org-scoped) |
+| `DELETE` | `/api/v1/permits/:permitId/evidences/:evidenceId` | delete row + physical file |
+
+Evidence upload is all-or-nothing: every file is validated & written, all
+rows inserted; on any failure the files written so far are rolled back.
+
+Ownership scoping: `organization_id` is stamped from the uploader's org on
+each evidence row; read/serve/delete require the caller's org to match
+(Super Admin bypasses).

@@ -57,4 +57,16 @@ export class UsersService {
   listByOrganizationWithRole(organizationId: string): Promise<User[]> {
     return this.userRepository.findByOrganizationWithRole(organizationId);
   }
+
+  /**
+   * Updates basic profile fields (name/email/phone) for a user. Email is
+   * globally unique, so a duplicate target email fails the constraint.
+   */
+  updateProfileFields(
+    id: string,
+    data: Partial<Pick<User, 'name' | 'email' | 'phone'>>,
+    options?: CreateOptions,
+  ): Promise<[number]> {
+    return this.userRepository.updateById(id, data, options);
+  }
 }
