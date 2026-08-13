@@ -12,6 +12,8 @@ import { OrganizationService } from './organization.service';
 import { CreateOrganizationDto } from './dto/create-organization.dto';
 import { InviteOrganizationDto } from './dto/invite-organization.dto';
 import { JoinOrganizationDto } from './dto/join-organization.dto';
+import { JoinOrganizationByTokenDto } from './dto/join-organization-by-token.dto';
+import { UpdateOrganizationDto } from './dto/update-organization.dto';
 import { UpdateUserRoleDto } from './dto/update-user-role.dto';
 import { Public } from '../../common/decorators/public.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -31,6 +33,17 @@ export class OrganizationController {
     return this.organizationService.createOrganization(dto, user.id);
   }
 
+  // Authenticated join-by-invitation-code. The account is already registered;
+  // joining moves them into the code's org (as supervisor_subcon) and creates
+  // a pending member_requests row awaiting org-admin approval.
+  @Post('join-code')
+  joinByCode(
+    @Body() dto: JoinOrganizationDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.organizationService.joinOrganizationByCode(dto, user.id);
+  }
+
   @Roles(RoleCode.SUPER_ADMIN, RoleCode.ORG_ADMIN)
   @Post(':id/invite')
   invite(
@@ -48,8 +61,100 @@ export class OrganizationController {
 
   @Public()
   @Post('join')
-  join(@Body() dto: JoinOrganizationDto) {
+  join(@Body() dto: JoinOrganizationByTokenDto) {
     return this.organizationService.join(dto);
+  }
+
+  // --- Org settings (Org Admin of that org, or Super Admin) ---
+
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.ORG_ADMIN)
+  @Get(':id/settings')
+  getSettings(
+    @Param('id', ParseUUIDPipe) organizationId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    if (user.roleCode === RoleCode.ORG_ADMIN && user.organizationId !== organizationId) {
+      throw new ForbiddenException('Tidak bisa melihat organization lain');
+    }
+    return this.organizationService.getOrganization(organizationId);
+  }
+
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.ORG_ADMIN)
+  @Patch(':id/settings')
+  updateSettings(
+    @Param('id', ParseUUIDPipe) organizationId: string,
+    @Body() dto: UpdateOrganizationDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    if (user.roleCode === RoleCode.ORG_ADMIN && user.organizationId !== organizationId) {
+      throw new ForbiddenException('Tidak bisa mengubah organization lain');
+    }
+    return this.organizationService.updateOrganization(organizationId, dto, user.id);
+  }
+
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.ORG_ADMIN, RoleCode.PROJECT_ADMIN)
+  @Get(':id/projects')
+  orgProjects(
+    @Param('id', ParseUUIDPipe) organizationId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    if (
+      (user.roleCode === RoleCode.ORG_ADMIN || user.roleCode === RoleCode.PROJECT_ADMIN) &&
+      user.organizationId !== organizationId
+    ) {
+      throw new ForbiddenException('Tidak bisa melihat proyek organization lain');
+    }
+    return this.organizationService.listOrgProjectsWithMembers(organizationId);
+  }
+
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.ORG_ADMIN)
+  @Get(':id/invitation-codes')
+  invitationCodes(
+    @Param('id', ParseUUIDPipe) organizationId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    if (user.roleCode === RoleCode.ORG_ADMIN && user.organizationId !== organizationId) {
+      throw new ForbiddenException('Tidak bisa melihat kode undangan organization lain');
+    }
+    return this.organizationService.getInvitationCodes(organizationId);
+  }
+
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.ORG_ADMIN)
+  @Get('roles')
+  assignableRoles() {
+    return this.organizationService.listAssignableRoles();
+  }
+
+  // --- Member join-by-code requests (Org Admin of that org, or Super Admin) ---
+
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.ORG_ADMIN)
+  @Get(':id/member-requests')
+  listMemberRequests(
+    @Param('id', ParseUUIDPipe) organizationId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    if (user.roleCode === RoleCode.ORG_ADMIN && user.organizationId !== organizationId) {
+      throw new ForbiddenException('Tidak bisa melihat permintaan organization lain');
+    }
+    return this.organizationService.listMemberRequests(organizationId);
+  }
+
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.ORG_ADMIN)
+  @Post('member-requests/:requestId/approve')
+  approveMemberRequest(
+    @Param('requestId', ParseUUIDPipe) requestId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.organizationService.approveMemberRequest(requestId, user.id, user.organizationId);
+  }
+
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.ORG_ADMIN)
+  @Post('member-requests/:requestId/reject')
+  rejectMemberRequest(
+    @Param('requestId', ParseUUIDPipe) requestId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.organizationService.rejectMemberRequest(requestId, user.id, user.organizationId);
   }
 
   // --- User management (Org Admin of that org, or Super Admin) ---
@@ -80,6 +185,27 @@ export class OrganizationController {
       throw new ForbiddenException('Tidak bisa mengubah user organization lain');
     }
     return this.organizationService.updateUserRole(organizationId, userId, dto, user.id);
+  }
+
+  // --- Project-scoped role management (project_admin of the project, or an
+  // admin of the project's organization) ---
+
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.ORG_ADMIN, RoleCode.PROJECT_ADMIN)
+  @Patch('projects/:projectId/users/:userId/role')
+  updateProjectUserRole(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Param('userId', ParseUUIDPipe) userId: string,
+    @Body() dto: UpdateUserRoleDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.organizationService.updateProjectUserRole(
+      projectId,
+      userId,
+      dto,
+      user.id,
+      user.roleCode,
+      user.organizationId,
+    );
   }
 
   // --- Super Admin approval gate for accounts stuck in 'pending' ---

@@ -25,6 +25,7 @@ const SYSTEM_ROLES: Array<{ code: RoleCode; name: string; description: string }>
   { code: RoleCode.SUPERVISOR_MAINCON, name: 'Supervisor - Main Contractor', description: 'Reviews permit applications (Step B)' },
   { code: RoleCode.HSE_MAINCON, name: 'HSE - Main Contractor', description: 'Reviews permit + mandatory notes (Step C)' },
   { code: RoleCode.CM_MAINCON, name: 'CM - Main Contractor', description: 'Final approval (Step D)' },
+  { code: RoleCode.PROJECT_ADMIN, name: 'Project Admin', description: 'Manages one project; sets roles of users inside it' },
 ];
 
 async function run() {

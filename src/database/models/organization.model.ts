@@ -15,6 +15,16 @@ export class Organization extends Model {
   @Column({ type: DataType.STRING(50), allowNull: false, unique: true })
   code: string;
 
+  // Location columns added by migration 006 (create-org form).
+  @Column({ type: DataType.STRING(255), allowNull: true })
+  address: string;
+
+  @Column({ type: DataType.STRING(100), allowNull: true })
+  city: string;
+
+  @Column({ type: DataType.STRING(100), allowNull: true })
+  province: string;
+
   @Column({
     type: DataType.ENUM(...Object.values(RecordStatus)),
     defaultValue: RecordStatus.ACTIVE,

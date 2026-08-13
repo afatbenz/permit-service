@@ -11,6 +11,10 @@ import { UsersModule } from './modules/users/users.module';
 import { OrganizationModule } from './modules/organization/organization.module';
 import { ProfileModule } from './modules/profile/profile.module';
 import { PermitModule } from './modules/permit/permit.module';
+import { ProjectModule } from './modules/project/project.module';
+import { ProjectCategoryModule } from './modules/project-category/project-category.module';
+import { NotificationModule } from './modules/notification/notification.module';
+import { LocationModule } from './modules/location/location.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 
@@ -29,6 +33,10 @@ import { RolesGuard } from './common/guards/roles.guard';
     OrganizationModule,
     ProfileModule,
     PermitModule,
+    ProjectModule,
+    ProjectCategoryModule,
+    NotificationModule,
+    LocationModule,
   ],
   providers: [
     // Order matters: JwtAuthGuard runs first (populates req.user / respects

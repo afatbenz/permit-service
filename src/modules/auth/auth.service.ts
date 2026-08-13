@@ -74,6 +74,10 @@ export class AuthService {
    * join-organization flow (invite/registration link).
    */
   async register(dto: RegisterDto) {
+    if (dto.password !== dto.confirmPassword) {
+      throw new BadRequestException('Konfirmasi password tidak sama');
+    }
+
     const existingUser = await this.usersService.findByEmail(dto.email);
     if (existingUser) {
       throw new ConflictException('Email sudah terdaftar');

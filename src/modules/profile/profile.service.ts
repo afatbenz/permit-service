@@ -7,6 +7,7 @@ import {
 import { InjectConnection, InjectModel } from '@nestjs/sequelize';
 import { Sequelize } from 'sequelize-typescript';
 import { User } from '../../database/models/user.model';
+import { Role } from '../../database/models/role.model';
 import { UserProfile } from '../../database/models/user-profile.model';
 import { UsersService } from '../users/users.service';
 import { StorageService } from '../../common/storage/storage.service';
@@ -168,11 +169,19 @@ export class ProfileService {
 
   /** Read-only profile payload (no transaction needed). */
   async getProfile(userId: string) {
-    const user = await this.userModel.findByPk(userId);
+    const user = await this.userModel.findByPk(userId, {
+      include: [{ model: Role, as: 'role', required: false }],
+    });
     const profile = await this.profileModel.findOne({ where: { userId } });
 
+    const role = user?.role;
     return {
-      user: user ? user.toSafeObject() : null,
+      user: user
+        ? {
+            ...user.toSafeObject(),
+            role: role ? { id: role.id, code: role.code, name: role.name } : null,
+          }
+        : null,
       signatureUrl: profile?.defaultSignatureUrl
         ? this.storageService.relativePath('signatures', profile.defaultSignatureUrl)
         : null,
