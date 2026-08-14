@@ -11,8 +11,10 @@ import { Op } from 'sequelize';
 import { Sequelize } from 'sequelize-typescript';
 import { Project } from '../../database/models/project.model';
 import { ProjectInvitationCode } from '../../database/models/project-invitation-code.model';
+import { Role } from '../../database/models/role.model';
 import { UserProjectAssignment } from '../../database/models/user-project-assignment.model';
 import { RecordStatus } from '../../common/enums/record-status.enum';
+import { RoleCode } from '../../common/enums/role-code.enum';
 import { InvitationCodeStatus } from '../../common/enums/invitation-code-status.enum';
 import { generateOrganizationCode } from '../../common/utils/organization-code.util';
 import { CreateProjectDto } from './dto/create-project.dto';
@@ -28,6 +30,7 @@ export class ProjectService {
     private readonly invitationCodeModel: typeof ProjectInvitationCode,
     @InjectModel(UserProjectAssignment)
     private readonly assignmentModel: typeof UserProjectAssignment,
+    @InjectModel(Role) private readonly roleModel: typeof Role,
     @InjectConnection() private readonly sequelize: Sequelize,
   ) {}
 
@@ -62,15 +65,33 @@ export class ProjectService {
   async listMyProjects(userId: string, organizationId: string) {
     const assignments = await this.assignmentModel.findAll({
       where: { userId, organizationId, status: RecordStatus.ACTIVE },
-      attributes: ['projectId'],
+      attributes: ['projectId', 'roleId'],
+      include: [
+        { model: Role, as: 'role', attributes: ['id', 'code', 'name'], required: false },
+      ],
     });
     if (assignments.length === 0) return { projects: [] };
+    const roleByProject = new Map(
+      assignments.map((a) => [
+        a.projectId,
+        {
+          roleId: a.roleId,
+          roleCode: (a as any).role?.code ?? null,
+          roleName: (a as any).role?.name ?? null,
+        },
+      ]),
+    );
     const projectIds = assignments.map((a) => a.projectId);
     const projects = await this.projectModel.findAll({
       where: { id: { [Op.in]: projectIds }, status: RecordStatus.ACTIVE },
       order: [['name', 'ASC']],
     });
-    return { projects: projects.map((p) => p.toJSON()) };
+    return {
+      projects: projects.map((p) => {
+        const role = roleByProject.get(p.id);
+        return { ...p.toJSON(), ...(role ?? { roleId: null, roleCode: null, roleName: null }) };
+      }),
+    };
   }
 
   /**
@@ -87,6 +108,14 @@ export class ProjectService {
       throw new ConflictException('Kode proyek sudah dipakai di organization ini');
     }
     const invitationCode = await this.generateUniqueInvitationCode(dto.name);
+
+    // Creator is the project's first member → its project_admin.
+    const projectAdminRole = await this.roleModel.findOne({
+      where: { code: RoleCode.PROJECT_ADMIN },
+    });
+    if (!projectAdminRole) {
+      throw new InternalServerErrorException('Role project_admin belum ter-seed di database');
+    }
 
     const project = await this.sequelize.transaction(async (transaction) => {
       const created = await this.projectModel.create(
@@ -117,6 +146,7 @@ export class ProjectService {
           organizationId,
           userId: createdBy,
           projectId: created.id,
+          roleId: projectAdminRole.id,
           status: RecordStatus.ACTIVE,
           createdBy,
         },

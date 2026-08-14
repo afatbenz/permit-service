@@ -18,7 +18,7 @@ import { InviteOrganizationDto } from './dto/invite-organization.dto';
 import { JoinOrganizationDto } from './dto/join-organization.dto';
 import { JoinOrganizationByTokenDto } from './dto/join-organization-by-token.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
-import { UpdateUserRoleDto } from './dto/update-user-role.dto';
+import { AssignmentDto, UpdateUserRoleDto } from './dto/update-user-role.dto';
 import { Role } from '../../database/models/role.model';
 import { Organization } from '../../database/models/organization.model';
 import { User } from '../../database/models/user.model';
@@ -142,6 +142,8 @@ export class OrganizationService {
           organizationId: organization.id,
           userId: createdBy,
           projectId: defaultProject.id,
+          // Creator is the project's first member → its project_admin.
+          roleId: projectAdminRole.id,
           status: RecordStatus.ACTIVE,
           createdBy,
         },
@@ -259,10 +261,15 @@ export class OrganizationService {
         );
       }
 
-      // Upsert the (inactive until approved) project assignment.
+      // Upsert the (inactive until approved) project assignment. The role is
+      // the joiner's current global role (supervisor_subcon for a fresh join);
+      // first-approve in approveMemberRequest promotes them to project_admin.
+      const assignmentRoleId = isPendingOrg
+        ? supervisorSubconRole!.id
+        : (user.roleId ?? supervisorSubconRole!.id);
       if (existingAssignment) {
         await existingAssignment.update(
-          { status: RecordStatus.INACTIVE },
+          { status: RecordStatus.INACTIVE, roleId: assignmentRoleId },
           { transaction },
         );
       } else {
@@ -271,6 +278,7 @@ export class OrganizationService {
             organizationId: codeRow.organizationId,
             userId,
             projectId: project.id,
+            roleId: assignmentRoleId,
             status: RecordStatus.INACTIVE,
             createdBy: userId,
           },
@@ -364,6 +372,11 @@ export class OrganizationService {
           projectAdminRole.id,
           { transaction },
         );
+        // The assignment's per-project role is project_admin too.
+        await this.assignmentModel.update(
+          { roleId: projectAdminRole.id, updatedBy: approvedBy },
+          { where: { userId: request.userId, projectId: project.id }, transaction },
+        );
       }
 
       await this.notificationModel.create(
@@ -445,9 +458,11 @@ export class OrganizationService {
     const [users, projects] = await Promise.all([
       userIds.length
         ? this.organizationModel.sequelize!.query(
-            `SELECT id, name, email FROM users WHERE id = ANY(:ids)`,
+            // Sequelize binds the array as a scalar string, so `ANY(:ids)` chokes.
+            // Build the PG array literal ourselves: '{uuid1,uuid2,...}'::uuid[].
+            `SELECT id, name, email FROM users WHERE id = ANY(:ids::uuid[])`,
             {
-              replacements: { ids: userIds },
+              replacements: { ids: `{${userIds.join(',')}}` },
               type: 'SELECT',
             },
           )
@@ -545,10 +560,11 @@ export class OrganizationService {
           {
             model: User,
             as: 'user',
-            attributes: ['id', 'name', 'email', 'roleId'],
-            include: [{ model: Role, as: 'role', attributes: ['id', 'code', 'name'], required: false }],
+            attributes: ['id', 'name', 'email'],
             required: false,
           },
+          // Per-project role — the role the user holds *within* this project.
+          { model: Role, as: 'role', attributes: ['id', 'code', 'name'], required: false },
         ],
       }),
     ]);
@@ -559,14 +575,16 @@ export class OrganizationService {
     >();
     for (const a of assignments) {
       const u = (a as any).user;
+      const aRole = (a as any).role;
       const list = grouped.get(a.projectId) ?? [];
       list.push({
         userId: a.userId,
         name: u?.name ?? null,
         email: u?.email ?? null,
-        roleId: u?.roleId ?? null,
-        roleCode: u?.role?.code ?? null,
-        roleName: u?.role?.name ?? null,
+        // Role comes from the assignment (per-project role), not users.role_id.
+        roleId: a.roleId ?? null,
+        roleCode: aRole?.code ?? null,
+        roleName: aRole?.name ?? null,
       });
       grouped.set(a.projectId, list);
     }
@@ -584,10 +602,20 @@ export class OrganizationService {
 
   /**
    * Org Admin (own org only) / Super Admin: reassign a user's role inside an
-   * organization. project_admin is now assignable (1 project = 1 project_admin).
-   * When assigning project_admin, a projectId (same org) is required and the
-   * project's projectAdminId is set. When moving a user off a role, any
-   * project they administered in this org is cleared.
+   * organization AND manage their project assignments.
+   *
+   * Two modes:
+   * - Full-replace (`dto.assignments` present): the user's ACTIVE project
+   *   assignments are replaced wholesale. Each assignment carries its own
+   *   per-project role (`user_project_assignments.role_id`); 1 user can hold
+   *   multiple projects, each with a different role. project_admin is a
+   *   per-project role → the project's projectAdminId follows the assignee.
+   * - Legacy (`dto.projectId` for project_admin): kept for the existing
+   *   single-project_admin picker.
+   *
+   * `dto.roleId` sets the *global* role (users.role_id) — the admin-vs-non-admin
+   * gate. Per-project roles never touch it. An 'unassigned' user receiving
+   * their first assignment is promoted off 'unassigned' so they can use the app.
    */
   async updateUserRole(
     organizationId: string,
@@ -619,6 +647,12 @@ export class OrganizationService {
       throw new ForbiddenException(`Role '${role.code}' tidak bisa di-assign oleh admin organization`);
     }
 
+    // --- Full-replace project assignment flow (per-project roles) ---
+    if (dto.assignments !== undefined) {
+      return this.updateUserAssignments(organizationId, user, role, dto.assignments, actorId);
+    }
+
+    // --- Legacy single-role path (project_admin picker, backward compat) ---
     await this.sequelize.transaction(async (transaction) => {
       if (role.code === RoleCode.PROJECT_ADMIN) {
         if (!dto.projectId) {
@@ -642,14 +676,16 @@ export class OrganizationService {
         }
 
         await this.sequelize.query(
-          `INSERT INTO user_project_assignments (id, organization_id, user_id, project_id, status, created_by, updated_by)
-           VALUES (gen_random_uuid(), :orgId, :userId, :projectId, 'active', :actorId, :actorId)
-           ON CONFLICT (user_id, project_id) DO NOTHING`,
+          `INSERT INTO user_project_assignments (id, organization_id, user_id, project_id, role_id, status, created_by, updated_by)
+           VALUES (gen_random_uuid(), :orgId, :userId, :projectId, :roleId, 'active', :actorId, :actorId)
+           ON CONFLICT (user_id, project_id) DO UPDATE
+             SET role_id = EXCLUDED.role_id, status = 'active', updated_by = :actorId`,
           {
             replacements: {
               orgId: organizationId,
               userId,
               projectId: project.id,
+              roleId: role.id,
               actorId,
             },
             transaction: transaction as any,
@@ -677,6 +713,127 @@ export class OrganizationService {
       message: `Role user ${user.name} diubah menjadi ${role.name}`,
       userId,
       role: { id: role.id, code: role.code, name: role.name },
+    };
+  }
+
+  /**
+   * Full-replace the user's ACTIVE project assignments. `assignments` is the
+   * complete desired set: each row is upserted as active (with its own
+   * per-project role), rows not present are soft-deleted (status → inactive),
+   * and project.projectAdminId follows the project_admin assignments.
+   */
+  private async updateUserAssignments(
+    organizationId: string,
+    user: User,
+    globalRole: Role,
+    assignments: AssignmentDto[],
+    actorId: string,
+  ) {
+    const projectIds = [...new Set(assignments.map((a) => a.projectId))];
+    const projects = projectIds.length
+      ? await this.projectModel.findAll({ where: { id: { [Op.in]: projectIds }, organizationId } })
+      : [];
+    if (projects.length !== projectIds.length) {
+      throw new BadRequestException('Salah satu proyek tidak ditemukan pada organization ini');
+    }
+    const projectById = new Map(projects.map((p) => [p.id, p] as [string, Project]));
+
+    const roleIds = [...new Set(assignments.map((a) => a.roleId))];
+    const roles = roleIds.length
+      ? await this.roleModel.findAll({ where: { id: roleIds } })
+      : [];
+    const roleById = new Map(roles.map((r) => [r.id, r] as [string, Role]));
+    for (const a of assignments) {
+      const r = roleById.get(a.roleId);
+      if (!r) {
+        throw new BadRequestException('Role assignment tidak ditemukan');
+      }
+      if (r.code === RoleCode.SUPER_ADMIN || r.code === RoleCode.UNASSIGNED) {
+        throw new ForbiddenException(
+          `Role '${r.code}' tidak bisa di-assign sebagai role proyek`,
+        );
+      }
+    }
+
+    const existing = await this.assignmentModel.findAll({
+      where: { userId: user.id, organizationId, status: RecordStatus.ACTIVE },
+    });
+
+    await this.sequelize.transaction(async (transaction) => {
+      const assignedProjectIds = new Set<string>();
+
+      for (const a of assignments) {
+        const project = projectById.get(a.projectId)!;
+        const roleForProject = roleById.get(a.roleId)!;
+        assignedProjectIds.add(a.projectId);
+
+        await this.sequelize.query(
+          `INSERT INTO user_project_assignments (id, organization_id, user_id, project_id, role_id, status, created_by, updated_by)
+           VALUES (gen_random_uuid(), :orgId, :userId, :projectId, :roleId, 'active', :actorId, :actorId)
+           ON CONFLICT (user_id, project_id) DO UPDATE
+             SET role_id = EXCLUDED.role_id, status = 'active', updated_by = :actorId`,
+          {
+            replacements: {
+              orgId: organizationId,
+              userId: user.id,
+              projectId: a.projectId,
+              roleId: a.roleId,
+              actorId,
+            },
+            transaction: transaction as any,
+          },
+        );
+
+        // project_admin is a per-project role → the project's admin pointer
+        // follows the assignee. Any other role demotes them (if they were it).
+        if (roleForProject.code === RoleCode.PROJECT_ADMIN) {
+          await project.update({ projectAdminId: user.id, updatedBy: actorId }, { transaction });
+        } else if (project.projectAdminId === user.id) {
+          await project.update({ projectAdminId: null, updatedBy: actorId }, { transaction });
+        }
+      }
+
+      // Soft-delete assignments removed from the set (keeps history; all reads
+      // filter status='active'). Clear the admin pointer if they administered it.
+      for (const a of existing) {
+        if (assignedProjectIds.has(a.projectId)) continue;
+        await a.update({ status: RecordStatus.INACTIVE, updatedBy: actorId }, { transaction });
+        const project = await this.projectModel.findOne({
+          where: { id: a.projectId, organizationId },
+          transaction,
+        });
+        if (project && project.projectAdminId === user.id) {
+          await project.update({ projectAdminId: null, updatedBy: actorId }, { transaction });
+        }
+      }
+
+      // Global role: driven only by the explicit `roleId` field. Promote an
+      // 'unassigned' user off that state once they're bound to a project.
+      let nextRole: Role | null = globalRole;
+      if (nextRole.code === RoleCode.UNASSIGNED) {
+        const firstRole = assignments.length ? roleById.get(assignments[0].roleId) : undefined;
+        nextRole =
+          firstRole && firstRole.code !== RoleCode.UNASSIGNED
+            ? firstRole
+            : await this.roleModel.findOne({ where: { code: RoleCode.SUPERVISOR_SUBCON } });
+      }
+      if (nextRole && user.roleId !== nextRole.id) {
+        await this.usersService.updateOrganizationAndRole(user.id, organizationId, nextRole.id, {
+          transaction,
+        });
+      }
+    });
+
+    return {
+      message: `Assignment proyek user ${user.name} diperbarui`,
+      userId: user.id,
+      role: { id: globalRole.id, code: globalRole.code, name: globalRole.name },
+      assignments: assignments.map((a) => ({
+        projectId: a.projectId,
+        roleId: a.roleId,
+        roleCode: roleById.get(a.roleId)?.code ?? null,
+        roleName: roleById.get(a.roleId)?.name ?? null,
+      })),
     };
   }
 
@@ -740,6 +897,12 @@ export class OrganizationService {
         // Moving the current project_admin to another role clears the pointer.
         await project.update({ projectAdminId: null, updatedBy: actorId }, { transaction });
       }
+
+      // Record the per-project role on the assignment.
+      await assignment.update(
+        { roleId: role.id, updatedBy: actorId },
+        { transaction },
+      );
 
       await this.usersService.updateOrganizationAndRole(
         userId,
@@ -1006,7 +1169,8 @@ export class OrganizationService {
 
   /**
    * Org Admin (own org only) / Super Admin: list every user in an
-   * organization with their role, for the user-management screen.
+   * organization with their role (global gate) AND their project assignments
+   * (each with its per-project role), for the user-management screen.
    */
   async listUsers(organizationId: string) {
     const organization = await this.organizationRepository.findById(organizationId);
@@ -1015,6 +1179,26 @@ export class OrganizationService {
     }
 
     const users = await this.usersService.listByOrganizationWithRole(organizationId);
+    const assignments = await this.assignmentModel.findAll({
+      where: { organizationId },
+      include: [
+        { model: Project, as: 'project', attributes: ['id', 'name'], required: false },
+        { model: Role, as: 'role', attributes: ['id', 'code', 'name'], required: false },
+      ],
+    });
+    const byUser = new Map<string, Array<unknown>>();
+    for (const a of assignments) {
+      const list = byUser.get(a.userId) ?? [];
+      list.push({
+        projectId: a.projectId,
+        projectName: (a as any).project?.name ?? null,
+        roleId: a.roleId,
+        roleCode: (a as any).role?.code ?? null,
+        roleName: (a as any).role?.name ?? null,
+        status: a.status,
+      });
+      byUser.set(a.userId, list);
+    }
 
     return {
       users: users.map((u) => ({
@@ -1028,6 +1212,7 @@ export class OrganizationService {
         verificationStatus: u.verificationStatus,
         status: u.status,
         createdAt: u.createdAt,
+        assignments: byUser.get(u.id) ?? [],
       })),
     };
   }
