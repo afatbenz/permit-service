@@ -597,9 +597,13 @@ export class OrganizationService {
       string,
       Array<{ userId: string; name: string | null; email: string | null; roleId: string | null; roleCode: string | null; roleName: string | null }>
     >();
+    // Organization admins are org-global — they must not appear as members of
+    // any project. Excluded by their per-project (assignment) role.
+    const HIDDEN_ROLES = new Set<RoleCode>([RoleCode.ORG_ADMIN]);
     for (const a of assignments) {
       const u = (a as any).user;
       const aRole = (a as any).role;
+      if (HIDDEN_ROLES.has(aRole?.code as RoleCode)) continue;
       const list = grouped.get(a.projectId) ?? [];
       list.push({
         userId: a.userId,
