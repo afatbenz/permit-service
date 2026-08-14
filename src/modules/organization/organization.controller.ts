@@ -92,16 +92,15 @@ export class OrganizationController {
     return this.organizationService.updateOrganization(organizationId, dto, user.id);
   }
 
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.ORG_ADMIN, RoleCode.PROJECT_ADMIN)
+  // Member project_admin needs the org's projects + members to manage the
+  // people in the project they admin. The data is org-internal: any
+  // authenticated user may view their OWN org's projects (super_admin any org).
   @Get(':id/projects')
   orgProjects(
     @Param('id', ParseUUIDPipe) organizationId: string,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    if (
-      (user.roleCode === RoleCode.ORG_ADMIN || user.roleCode === RoleCode.PROJECT_ADMIN) &&
-      user.organizationId !== organizationId
-    ) {
+    if (user.roleCode !== RoleCode.SUPER_ADMIN && user.organizationId !== organizationId) {
       throw new ForbiddenException('Tidak bisa melihat proyek organization lain');
     }
     return this.organizationService.listOrgProjectsWithMembers(organizationId);
@@ -189,8 +188,12 @@ export class OrganizationController {
 
   // --- Project-scoped role management (project_admin of the project, or an
   // admin of the project's organization) ---
+  //
+  // No @Roles(...) here: a project_admin is recognized by their ACTIVE
+  // assignment's per-project role (user_project_assignments.role_id), which
+  // can differ from their global role. The service enforces the authorization
+  // (org admin of that org, or the project_admin of that project).
 
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.ORG_ADMIN, RoleCode.PROJECT_ADMIN)
   @Patch('projects/:projectId/users/:userId/role')
   updateProjectUserRole(
     @Param('projectId', ParseUUIDPipe) projectId: string,

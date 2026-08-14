@@ -8,6 +8,8 @@ import { InjectModel } from '@nestjs/sequelize';
 import { Op } from 'sequelize';
 import { PermitCategory } from '../../database/models/permit-category.model';
 import { Project } from '../../database/models/project.model';
+import { Role } from '../../database/models/role.model';
+import { UserProjectAssignment } from '../../database/models/user-project-assignment.model';
 import { RecordStatus } from '../../common/enums/record-status.enum';
 import { RoleCode } from '../../common/enums/role-code.enum';
 import { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface';
@@ -34,6 +36,8 @@ export class ProjectCategoryService {
     private readonly categoryModel: typeof PermitCategory,
     @InjectModel(Project)
     private readonly projectModel: typeof Project,
+    @InjectModel(UserProjectAssignment)
+    private readonly assignmentModel: typeof UserProjectAssignment,
   ) {}
 
   /** Loads the project or throws; also proves org scope when orgId given. */
@@ -47,16 +51,44 @@ export class ProjectCategoryService {
     return project;
   }
 
-  /** Scope check for mutations: super / org_admin of the project's org / its project_admin. */
-  private assertCanMutate(project: Project, actor: AuthenticatedUser): void {
+  /**
+   * Scope check for mutations: super / org_admin of the project's org / its
+   * project_admin. A project_admin is recognized by their ACTIVE assignment's
+   * per-project role (user_project_assignments.role_id), NOT their global role
+   * (same pattern as updateProjectUserRole).
+   */
+  private async assertCanMutate(project: Project, actor: AuthenticatedUser): Promise<void> {
     const isSuper = actor.roleCode === RoleCode.SUPER_ADMIN;
     const isOrgAdmin =
       actor.roleCode === RoleCode.ORG_ADMIN && actor.organizationId === project.organizationId;
+    if (isSuper || isOrgAdmin) return;
+
+    const actorAssignment = await this.assignmentModel.findOne({
+      where: { userId: actor.id, projectId: project.id, status: RecordStatus.ACTIVE },
+      include: [{ model: Role, as: 'role', required: false }],
+    });
     const isProjAdmin =
-      actor.roleCode === RoleCode.PROJECT_ADMIN && project.projectAdminId === actor.id;
-    if (!isSuper && !isOrgAdmin && !isProjAdmin) {
+      (actorAssignment as any)?.role?.code === RoleCode.PROJECT_ADMIN &&
+      project.projectAdminId === actor.id;
+    if (!isProjAdmin) {
       throw new ForbiddenException('Anda tidak berwenang mengubah kategori proyek ini');
     }
+  }
+
+  /** Same rights as assertCanMutate, but as a boolean (for list responses). */
+  private async resolveCanMutate(project: Project, actor: AuthenticatedUser): Promise<boolean> {
+    if (actor.roleCode === RoleCode.SUPER_ADMIN) return true;
+    if (actor.roleCode === RoleCode.ORG_ADMIN && actor.organizationId === project.organizationId) {
+      return true;
+    }
+    const actorAssignment = await this.assignmentModel.findOne({
+      where: { userId: actor.id, projectId: project.id, status: RecordStatus.ACTIVE },
+      include: [{ model: Role, as: 'role', required: false }],
+    });
+    return (
+      (actorAssignment as any)?.role?.code === RoleCode.PROJECT_ADMIN &&
+      project.projectAdminId === actor.id
+    );
   }
 
   /**
@@ -91,10 +123,9 @@ export class ProjectCategoryService {
       if (row.status === RecordStatus.ARCHIVED) byName.delete(row.name);
     }
 
-    const canMutate =
-      actor.roleCode === RoleCode.SUPER_ADMIN ||
-      (actor.roleCode === RoleCode.ORG_ADMIN && actor.organizationId === project.organizationId) ||
-      (actor.roleCode === RoleCode.PROJECT_ADMIN && project.projectAdminId === actor.id);
+    // Mutation rights mirror assertCanMutate, but resolve() may run for the
+    // project_admin's OWN project — reuse the assignment check via a flag.
+    const canMutate = await this.resolveCanMutate(project, actor);
 
     const categories = [...byName.values()].map((row) => {
       const scope: CategoryScope = row.projectId
@@ -124,7 +155,7 @@ export class ProjectCategoryService {
     actor: AuthenticatedUser,
   ) {
     const project = await this.loadProject(projectId, organizationId);
-    this.assertCanMutate(project, actor);
+    await this.assertCanMutate(project, actor);
 
     const name = dto.name.trim();
     const existing = await this.categoryModel.findOne({
@@ -170,7 +201,7 @@ export class ProjectCategoryService {
     actor: AuthenticatedUser,
   ) {
     const project = await this.loadProject(projectId, organizationId);
-    this.assertCanMutate(project, actor);
+    await this.assertCanMutate(project, actor);
 
     const existing = await this.categoryModel.findOne({
       where: { id: categoryId, organizationId, projectId },
@@ -190,7 +221,7 @@ export class ProjectCategoryService {
     actor: AuthenticatedUser,
   ) {
     const project = await this.loadProject(projectId, organizationId);
-    this.assertCanMutate(project, actor);
+    await this.assertCanMutate(project, actor);
 
     const existing = await this.categoryModel.findOne({
       where: { id: categoryId, organizationId, projectId },

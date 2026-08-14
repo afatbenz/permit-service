@@ -859,7 +859,18 @@ export class OrganizationService {
     const isOrgAdmin =
       (actorRoleCode === RoleCode.ORG_ADMIN || actorRoleCode === RoleCode.SUPER_ADMIN) &&
       actorOrganizationId === project.organizationId;
-    const isProjectAdmin = actorRoleCode === RoleCode.PROJECT_ADMIN && project.projectAdminId === actorId;
+
+    // A project_admin is recognized by their ACTIVE assignment's per-project
+    // role (user_project_assignments.role_id), NOT their global role — a user
+    // can hold project_admin in one project while their global role stays e.g.
+    // supervisor_subcon.
+    const actorAssignment = await this.assignmentModel.findOne({
+      where: { userId: actorId, projectId: project.id, status: RecordStatus.ACTIVE },
+      include: [{ model: Role, as: 'role', required: false }],
+    });
+    const isProjectAdmin =
+      (actorAssignment as any)?.role?.code === RoleCode.PROJECT_ADMIN &&
+      project.projectAdminId === actorId;
     if (!isOrgAdmin && !isProjectAdmin) {
       throw new ForbiddenException('Anda tidak memiliki akses untuk mengubah role di proyek ini');
     }

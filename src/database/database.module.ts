@@ -16,6 +16,7 @@ import { MemberRequest } from './models/member-request.model';
 import { Notification } from './models/notification.model';
 import { UserProjectAssignment } from './models/user-project-assignment.model';
 import { PermitCategory } from './models/permit-category.model';
+import { PermitBankQuestion } from './models/permit-bank-question.model';
 
 @Module({
   imports: [
@@ -53,6 +54,7 @@ import { PermitCategory } from './models/permit-category.model';
           Notification,
           UserProjectAssignment,
           PermitCategory,
+          PermitBankQuestion,
         ],
         logging: false,
       }),

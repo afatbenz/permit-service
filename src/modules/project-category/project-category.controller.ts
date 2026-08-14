@@ -11,9 +11,7 @@ import {
 import { ProjectCategoryService } from './project-category.service';
 import { CreateProjectCategoryDto } from './dto/create-project-category.dto';
 import { UpdateProjectCategoryDto } from './dto/update-project-category.dto';
-import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { RoleCode } from '../../common/enums/role-code.enum';
 import { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface';
 
 /**
@@ -34,7 +32,6 @@ export class ProjectCategoryController {
   }
 
   @Post()
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.ORG_ADMIN, RoleCode.PROJECT_ADMIN)
   create(
     @Param('projectId', ParseUUIDPipe) projectId: string,
     @Body() dto: CreateProjectCategoryDto,
@@ -44,7 +41,6 @@ export class ProjectCategoryController {
   }
 
   @Patch(':categoryId')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.ORG_ADMIN, RoleCode.PROJECT_ADMIN)
   updateColor(
     @Param('projectId', ParseUUIDPipe) projectId: string,
     @Param('categoryId', ParseUUIDPipe) categoryId: string,
@@ -55,7 +51,6 @@ export class ProjectCategoryController {
   }
 
   @Delete(':categoryId')
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.ORG_ADMIN, RoleCode.PROJECT_ADMIN)
   remove(
     @Param('projectId', ParseUUIDPipe) projectId: string,
     @Param('categoryId', ParseUUIDPipe) categoryId: string,

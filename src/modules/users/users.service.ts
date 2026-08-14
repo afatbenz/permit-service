@@ -16,6 +16,11 @@ export class UsersService {
     return this.userRepository.findById(id);
   }
 
+  /** Loads a user with their global role joined in (used by JWT auth). */
+  findByIdWithRole(id: string): Promise<User | null> {
+    return this.userRepository.findByIdWithRole(id);
+  }
+
   create(data: Record<string, unknown>, options?: CreateOptions): Promise<User> {
     return this.userRepository.create(data, options);
   }
