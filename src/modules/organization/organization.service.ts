@@ -518,13 +518,37 @@ export class OrganizationService {
     return { organization: organization.toJSON() };
   }
 
-  /** Org-settings card 2: active invitation codes with their project names. */
-  async getInvitationCodes(organizationId: string) {
+  /**
+   * Org-settings card 2 / Users-page card: active invitation codes with their
+   * project names. org_admin/super_admin see every code in the org. A member
+   * (global role, e.g. supervisor_subcon) sees codes only for the projects
+   * where they hold an ACTIVE per-project project_admin assignment — the same
+   * recognition `updateProjectUserRole` uses (assignment role, not global).
+   */
+  async getInvitationCodes(organizationId: string, actorId?: string, actorRoleCode?: RoleCode) {
+    const isAdmin =
+      actorRoleCode === RoleCode.ORG_ADMIN || actorRoleCode === RoleCode.SUPER_ADMIN;
+    let adminProjectIds: string[] | null = null;
+    if (!isAdmin) {
+      const assignments = await this.assignmentModel.findAll({
+        where: { userId: actorId, organizationId, status: RecordStatus.ACTIVE },
+        include: [{ model: Role, as: 'role', required: false }],
+      });
+      adminProjectIds = (assignments as Array<{ projectId: string; role?: { code?: string } | null }>)
+        .filter((a) => a.role?.code === RoleCode.PROJECT_ADMIN)
+        .map((a) => a.projectId);
+      if (adminProjectIds.length === 0) {
+        return { codes: [] };
+      }
+    }
     const codes = await this.invitationCodeModel.findAll({
       where: { organizationId },
       order: [['createdAt', 'DESC']],
     });
-    const projectIds = [...new Set(codes.map((c) => c.projectId))];
+    const scoped = adminProjectIds
+      ? codes.filter((c) => adminProjectIds.includes(c.projectId))
+      : codes;
+    const projectIds = [...new Set(scoped.map((c) => c.projectId))];
     const projects = projectIds.length
       ? await this.projectModel.findAll({
           where: { id: projectIds },
@@ -536,7 +560,7 @@ export class OrganizationService {
     );
 
     return {
-      codes: codes.map((c) => ({
+      codes: scoped.map((c) => ({
         id: c.id,
         projectId: c.projectId,
         projectName: projectMap.get(c.projectId) ?? null,

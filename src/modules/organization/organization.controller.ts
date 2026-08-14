@@ -106,19 +106,32 @@ export class OrganizationController {
     return this.organizationService.listOrgProjectsWithMembers(organizationId);
   }
 
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.ORG_ADMIN)
+  // Same-org restriction below is the real gate: `@Roles` checks the GLOBAL
+  // role, but a project admin's global role is a member code (e.g.
+  // supervisor_subcon) — they'd never pass `@Roles(PROJECT_ADMIN)`. Their
+  // access comes from holding project_admin per-project, so the route is
+  // open to any authenticated user of the same org, like GET :id/projects.
   @Get(':id/invitation-codes')
   invitationCodes(
     @Param('id', ParseUUIDPipe) organizationId: string,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    if (user.roleCode === RoleCode.ORG_ADMIN && user.organizationId !== organizationId) {
+    if (user.organizationId !== organizationId) {
       throw new ForbiddenException('Tidak bisa melihat kode undangan organization lain');
     }
-    return this.organizationService.getInvitationCodes(organizationId);
+    // Same-org authenticated users may call; the service scopes to the caller's
+    // admin projects (project_admin assignment) for members, and the full list
+    // for org_admin/super_admin. projectAdminId consistency is enforced there.
+    return this.organizationService.getInvitationCodes(
+      organizationId,
+      user.id,
+      user.roleCode as RoleCode,
+    );
   }
 
-  @Roles(RoleCode.SUPER_ADMIN, RoleCode.ORG_ADMIN)
+  // Global role list is org-internal (assignable roles only, no users/orgs) —
+  // any authenticated user may read it. Needed by project admins when they
+  // change a member's per-project role on the Users page.
   @Get('roles')
   assignableRoles() {
     return this.organizationService.listAssignableRoles();
