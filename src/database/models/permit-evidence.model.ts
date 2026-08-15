@@ -1,12 +1,15 @@
 import {
+  BelongsTo,
   Column,
   DataType,
   Default,
+  ForeignKey,
   Model,
   PrimaryKey,
   Table,
 } from 'sequelize-typescript';
 import { EvidenceType } from '../../common/enums/evidence-type.enum';
+import { Permit } from './permit.model';
 
 /**
  * One evidence attachment of a permit (SITE_MAP / EQUIPMENT / OTHER).
@@ -23,9 +26,13 @@ export class PermitEvidence extends Model {
   @Column(DataType.UUID)
   id: string;
 
-  /** Opaque permit reference (no FK yet — permits table not built). */
+  /** Permit this evidence belongs to (FK added by migration 010). */
+  @ForeignKey(() => Permit)
   @Column({ type: DataType.UUID, allowNull: false })
   permitId: string;
+
+  @BelongsTo(() => Permit, 'permitId')
+  permit: Permit;
 
   /** Tenant scope used for ownership checks. */
   @Column({ type: DataType.UUID, allowNull: false })
