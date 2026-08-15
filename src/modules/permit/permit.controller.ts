@@ -1,10 +1,12 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   Delete,
   Get,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
   Res,
@@ -17,29 +19,87 @@ import { PermitService } from './permit.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface';
 import { EvidenceType } from '../../common/enums/evidence-type.enum';
+import { CreatePermitDto } from './dto/create-permit.dto';
+import { UpdatePermitDto } from './dto/update-permit.dto';
+import { UpdatePermitStatusDto } from './dto/update-permit-status.dto';
 
 const EVIDENCE_MAX_FILES = 10;
 const EVIDENCE_FILE_FIELD = 'files';
 
 /**
- * E-Permit evidence endpoints.
+ * Permit-to-work records + evidence attachments.
  *
- * Upload payload (multipart/form-data):
- *   files : repeated key `files` — one per file (max 10).
- *   types : single JSON-encoded array string, index-aligned to `files`.
- *           e.g. types = '["SITE_MAP","EQUIPMENT","OTHER"]'
+ * Routes under `permits/:permitId/evidences` are inherited from the
+ * evidence-only controller that used to live here.
  *
- * Example fetch:
- *   const fd = new FormData();
- *   fd.append('files', f0); fd.append('files', f1);
- *   fd.append('types', JSON.stringify(['SITE_MAP', 'EQUIPMENT']));
- *   await fetch('/api/v1/permits/<permitId>/evidences', { method: 'POST', body: fd });
+ * Access is enforced in the service (project-scoped, assignment-based) —
+ * no @Roles(...), matching the bank-question / project-user-role pattern:
+ * a project member is recognized by their ACTIVE per-project assignment,
+ * not their global role.
  */
-@Controller('permits/:permitId/evidences')
+@Controller()
 export class PermitController {
   constructor(private readonly permitService: PermitService) {}
 
-  @Post()
+  // ---- Permit CRUD ------------------------------------------------------
+
+  @Get('permits')
+  list(
+    @Query('projectId') projectId?: string,
+    @CurrentUser() user?: AuthenticatedUser,
+  ) {
+    return this.permitService.list(
+      projectId ? projectId : null,
+      user!,
+      user!.organizationId,
+    );
+  }
+
+  @Get('permits/:permitId')
+  findOne(
+    @Param('permitId', ParseUUIDPipe) permitId: string,
+    @CurrentUser() user?: AuthenticatedUser,
+  ) {
+    return this.permitService.findOne(permitId, user!, user!.organizationId);
+  }
+
+  @Post('permits')
+  create(
+    @Body() dto: CreatePermitDto,
+    @CurrentUser() user?: AuthenticatedUser,
+  ) {
+    return this.permitService.create(dto.projectId, dto, user!, user!.organizationId);
+  }
+
+  @Patch('permits/:permitId')
+  update(
+    @Param('permitId', ParseUUIDPipe) permitId: string,
+    @Body() dto: UpdatePermitDto,
+    @CurrentUser() user?: AuthenticatedUser,
+  ) {
+    return this.permitService.update(permitId, dto, user!, user!.organizationId);
+  }
+
+  @Patch('permits/:permitId/status')
+  updateStatus(
+    @Param('permitId', ParseUUIDPipe) permitId: string,
+    @Body() dto: UpdatePermitStatusDto,
+    @CurrentUser() user?: AuthenticatedUser,
+  ) {
+    return this.permitService.updateStatus(permitId, dto, user!, user!.organizationId);
+  }
+
+  @Delete('permits/:permitId')
+  remove(
+    @Param('permitId', ParseUUIDPipe) permitId: string,
+    @CurrentUser() user?: AuthenticatedUser,
+  ) {
+    return this.permitService.remove(permitId, user!, user!.organizationId);
+  }
+
+  // ---- Evidence (inherited) ---------------------------------------------
+
+  @Post('permits/:permitId/evidences')
   @UseInterceptors(
     FilesInterceptor(EVIDENCE_FILE_FIELD, EVIDENCE_MAX_FILES, {
       limits: { fileSize: 5 * 1024 * 1024 },
@@ -48,70 +108,59 @@ export class PermitController {
   upload(
     @Param('permitId', ParseUUIDPipe) permitId: string,
     @UploadedFiles() files: Express.Multer.File[] | undefined,
-    @CurrentUser() user: AuthenticatedUser,
+    @CurrentUser() user?: AuthenticatedUser,
     @Query('types') typesRaw?: string,
   ) {
     const types = this.parseTypes(typesRaw);
-    return this.permitService.uploadEvidence(permitId, files ?? [], types, user);
+    return this.permitService.uploadEvidence(permitId, files ?? [], types, user!);
   }
 
-  @Get()
-  list(
+  @Get('permits/:permitId/evidences')
+  listEvidences(
     @Param('permitId', ParseUUIDPipe) permitId: string,
     @Query('evidenceType') evidenceType: EvidenceType | undefined,
-    @CurrentUser() user: AuthenticatedUser,
+    @CurrentUser() user?: AuthenticatedUser,
   ) {
     if (evidenceType && !Object.values(EvidenceType).includes(evidenceType)) {
       throw new BadRequestException(`evidenceType tidak valid: ${evidenceType}`);
     }
-    return this.permitService.listEvidence(permitId, evidenceType, user);
+    return this.permitService.listEvidence(permitId, evidenceType, user!);
   }
 
-  @Get(':evidenceId/file')
-  async serve(
+  @Get('permits/:permitId/evidences/:evidenceId/file')
+  async evidenceFile(
     @Param('permitId', ParseUUIDPipe) permitId: string,
     @Param('evidenceId', ParseUUIDPipe) evidenceId: string,
-    @CurrentUser() user: AuthenticatedUser,
     @Res() res: Response,
+    @CurrentUser() user?: AuthenticatedUser,
   ) {
-    const { data, mimeType } = await this.permitService.readEvidence(permitId, evidenceId, user);
+    const { data, mimeType } = await this.permitService.readEvidence(permitId, evidenceId, user!);
     res.setHeader('Content-Type', mimeType);
     res.setHeader('Cache-Control', 'private, max-age=3600');
     res.send(data);
   }
 
-  @Delete(':evidenceId')
-  remove(
+  @Delete('permits/:permitId/evidences/:evidenceId')
+  removeEvidence(
     @Param('permitId', ParseUUIDPipe) permitId: string,
     @Param('evidenceId', ParseUUIDPipe) evidenceId: string,
-    @CurrentUser() user: AuthenticatedUser,
+    @CurrentUser() user?: AuthenticatedUser,
   ) {
-    return this.permitService.deleteEvidence(permitId, evidenceId, user);
+    return this.permitService.deleteEvidence(permitId, evidenceId, user!);
   }
 
-  /**
-   * Parses the `types` query/field (JSON-encoded array string) into an
-   * array of EvidenceType. Sent as a query param so it survives the
-   * multipart parser without extra body plumbing.
-   */
-  private parseTypes(typesRaw: string | undefined): EvidenceType[] {
-    if (!typesRaw) {
-      throw new BadRequestException('Field "types" wajib diisi (JSON array string).');
-    }
-    let parsed: unknown;
+  private parseTypes(typesRaw?: string): EvidenceType[] {
+    if (!typesRaw) return [];
     try {
-      parsed = JSON.parse(typesRaw);
-    } catch {
-      throw new BadRequestException('Field "types" harus berupa JSON array string, mis. ["SITE_MAP"].');
-    }
-    if (!Array.isArray(parsed)) {
-      throw new BadRequestException('Field "types" harus berupa array.');
-    }
-    for (const t of parsed) {
-      if (typeof t !== 'string' || !Object.values(EvidenceType).includes(t as EvidenceType)) {
-        throw new BadRequestException(`evidenceType tidak valid: ${String(t)}`);
+      const parsed = JSON.parse(typesRaw);
+      if (!Array.isArray(parsed)) {
+        throw new BadRequestException('Parameter types harus berupa array JSON');
       }
+      return parsed.filter((t): t is EvidenceType =>
+        Object.values(EvidenceType).includes(t as EvidenceType),
+      );
+    } catch {
+      throw new BadRequestException('Parameter types harus berupa array JSON yang valid');
     }
-    return parsed as EvidenceType[];
   }
 }

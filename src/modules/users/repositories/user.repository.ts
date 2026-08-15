@@ -14,6 +14,13 @@ export class UserRepository extends BaseRepository<User> {
     return this.model.findOne({ where: { email } });
   }
 
+  /** Loads a user with their global role joined in (used by JWT auth). */
+  findByIdWithRole(id: string): Promise<User | null> {
+    return this.model.findByPk(id, {
+      include: [{ model: Role, as: 'role', required: false }],
+    });
+  }
+
   touchLastLogin(id: string): Promise<[number]> {
     return this.model.update({ lastLoginAt: new Date() }, { where: { id } });
   }

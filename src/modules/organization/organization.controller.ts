@@ -12,6 +12,8 @@ import { OrganizationService } from './organization.service';
 import { CreateOrganizationDto } from './dto/create-organization.dto';
 import { InviteOrganizationDto } from './dto/invite-organization.dto';
 import { JoinOrganizationDto } from './dto/join-organization.dto';
+import { JoinOrganizationByTokenDto } from './dto/join-organization-by-token.dto';
+import { UpdateOrganizationDto } from './dto/update-organization.dto';
 import { UpdateUserRoleDto } from './dto/update-user-role.dto';
 import { Public } from '../../common/decorators/public.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -31,6 +33,17 @@ export class OrganizationController {
     return this.organizationService.createOrganization(dto, user.id);
   }
 
+  // Authenticated join-by-invitation-code. The account is already registered;
+  // joining moves them into the code's org (as supervisor_subcon) and creates
+  // a pending member_requests row awaiting org-admin approval.
+  @Post('join-code')
+  joinByCode(
+    @Body() dto: JoinOrganizationDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.organizationService.joinOrganizationByCode(dto, user.id);
+  }
+
   @Roles(RoleCode.SUPER_ADMIN, RoleCode.ORG_ADMIN)
   @Post(':id/invite')
   invite(
@@ -48,8 +61,112 @@ export class OrganizationController {
 
   @Public()
   @Post('join')
-  join(@Body() dto: JoinOrganizationDto) {
+  join(@Body() dto: JoinOrganizationByTokenDto) {
     return this.organizationService.join(dto);
+  }
+
+  // --- Org settings (Org Admin of that org, or Super Admin) ---
+
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.ORG_ADMIN)
+  @Get(':id/settings')
+  getSettings(
+    @Param('id', ParseUUIDPipe) organizationId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    if (user.roleCode === RoleCode.ORG_ADMIN && user.organizationId !== organizationId) {
+      throw new ForbiddenException('Tidak bisa melihat organization lain');
+    }
+    return this.organizationService.getOrganization(organizationId);
+  }
+
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.ORG_ADMIN)
+  @Patch(':id/settings')
+  updateSettings(
+    @Param('id', ParseUUIDPipe) organizationId: string,
+    @Body() dto: UpdateOrganizationDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    if (user.roleCode === RoleCode.ORG_ADMIN && user.organizationId !== organizationId) {
+      throw new ForbiddenException('Tidak bisa mengubah organization lain');
+    }
+    return this.organizationService.updateOrganization(organizationId, dto, user.id);
+  }
+
+  // Member project_admin needs the org's projects + members to manage the
+  // people in the project they admin. The data is org-internal: any
+  // authenticated user may view their OWN org's projects (super_admin any org).
+  @Get(':id/projects')
+  orgProjects(
+    @Param('id', ParseUUIDPipe) organizationId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    if (user.roleCode !== RoleCode.SUPER_ADMIN && user.organizationId !== organizationId) {
+      throw new ForbiddenException('Tidak bisa melihat proyek organization lain');
+    }
+    return this.organizationService.listOrgProjectsWithMembers(organizationId);
+  }
+
+  // Same-org restriction below is the real gate: `@Roles` checks the GLOBAL
+  // role, but a project admin's global role is a member code (e.g.
+  // supervisor_subcon) — they'd never pass `@Roles(PROJECT_ADMIN)`. Their
+  // access comes from holding project_admin per-project, so the route is
+  // open to any authenticated user of the same org, like GET :id/projects.
+  @Get(':id/invitation-codes')
+  invitationCodes(
+    @Param('id', ParseUUIDPipe) organizationId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    if (user.organizationId !== organizationId) {
+      throw new ForbiddenException('Tidak bisa melihat kode undangan organization lain');
+    }
+    // Same-org authenticated users may call; the service scopes to the caller's
+    // admin projects (project_admin assignment) for members, and the full list
+    // for org_admin/super_admin. projectAdminId consistency is enforced there.
+    return this.organizationService.getInvitationCodes(
+      organizationId,
+      user.id,
+      user.roleCode as RoleCode,
+    );
+  }
+
+  // Global role list is org-internal (assignable roles only, no users/orgs) —
+  // any authenticated user may read it. Needed by project admins when they
+  // change a member's per-project role on the Users page.
+  @Get('roles')
+  assignableRoles() {
+    return this.organizationService.listAssignableRoles();
+  }
+
+  // --- Member join-by-code requests (Org Admin of that org, or Super Admin) ---
+
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.ORG_ADMIN)
+  @Get(':id/member-requests')
+  listMemberRequests(
+    @Param('id', ParseUUIDPipe) organizationId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    if (user.roleCode === RoleCode.ORG_ADMIN && user.organizationId !== organizationId) {
+      throw new ForbiddenException('Tidak bisa melihat permintaan organization lain');
+    }
+    return this.organizationService.listMemberRequests(organizationId);
+  }
+
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.ORG_ADMIN)
+  @Post('member-requests/:requestId/approve')
+  approveMemberRequest(
+    @Param('requestId', ParseUUIDPipe) requestId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.organizationService.approveMemberRequest(requestId, user.id, user.organizationId);
+  }
+
+  @Roles(RoleCode.SUPER_ADMIN, RoleCode.ORG_ADMIN)
+  @Post('member-requests/:requestId/reject')
+  rejectMemberRequest(
+    @Param('requestId', ParseUUIDPipe) requestId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.organizationService.rejectMemberRequest(requestId, user.id, user.organizationId);
   }
 
   // --- User management (Org Admin of that org, or Super Admin) ---
@@ -80,6 +197,31 @@ export class OrganizationController {
       throw new ForbiddenException('Tidak bisa mengubah user organization lain');
     }
     return this.organizationService.updateUserRole(organizationId, userId, dto, user.id);
+  }
+
+  // --- Project-scoped role management (project_admin of the project, or an
+  // admin of the project's organization) ---
+  //
+  // No @Roles(...) here: a project_admin is recognized by their ACTIVE
+  // assignment's per-project role (user_project_assignments.role_id), which
+  // can differ from their global role. The service enforces the authorization
+  // (org admin of that org, or the project_admin of that project).
+
+  @Patch('projects/:projectId/users/:userId/role')
+  updateProjectUserRole(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Param('userId', ParseUUIDPipe) userId: string,
+    @Body() dto: UpdateUserRoleDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.organizationService.updateProjectUserRole(
+      projectId,
+      userId,
+      dto,
+      user.id,
+      user.roleCode,
+      user.organizationId,
+    );
   }
 
   // --- Super Admin approval gate for accounts stuck in 'pending' ---

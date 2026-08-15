@@ -11,6 +11,14 @@ import { RegistrationLink } from './models/registration-link.model';
 import { OrganizationInvite } from './models/organization-invite.model';
 import { RefreshToken } from './models/refresh-token.model';
 import { PermitEvidence } from './models/permit-evidence.model';
+import { ProjectInvitationCode } from './models/project-invitation-code.model';
+import { MemberRequest } from './models/member-request.model';
+import { Notification } from './models/notification.model';
+import { UserProjectAssignment } from './models/user-project-assignment.model';
+import { PermitCategory } from './models/permit-category.model';
+import { PermitBankQuestion } from './models/permit-bank-question.model';
+import { PermitAnswer } from './models/permit-answer.model';
+import { Permit } from './models/permit.model';
 
 @Module({
   imports: [
@@ -43,6 +51,14 @@ import { PermitEvidence } from './models/permit-evidence.model';
           OrganizationInvite,
           RefreshToken,
           PermitEvidence,
+          ProjectInvitationCode,
+          MemberRequest,
+          Notification,
+          UserProjectAssignment,
+          PermitCategory,
+          PermitBankQuestion,
+          PermitAnswer,
+          Permit,
         ],
         logging: false,
       }),
